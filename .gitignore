@@ -1,0 +1,22 @@
+# Build products and machine-specific symbol configuration
+/dist/
+/native/symbols/
+*.exe
+*.dll
+*.obj
+*.pdb
+*.lib
+*.exp
+bridge.ini
+*.log
+*.dmp
+*.zip
+*.user
+*.suo
+.vs/
+.env
+.env.*
+!/.env.example
+# Local evidence and diagnostics must never be published.
+VERIFICATION*.md
+*local-settings*
