@@ -99,7 +99,9 @@ try {
     $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $root 'uninstall-v2.ps1') + '"'; $shortcut.Save()
 
     $generation = [Guid]::NewGuid().ToString('N')
-    New-Item -Path $appKey -Force | Out-Null
+    # New-Item -Force recreates an existing registry key and drops its values, which
+    # would lose State/WantEnabled/originals on upgrade. Create it only when absent.
+    if (-not $existingKey) { New-Item -Path $appKey -Force | Out-Null }
     if (-not $existingKey) { New-ItemProperty -Path $appKey -Name State -Value 'Disabled' -PropertyType String -Force | Out-Null }
     New-ItemProperty -Path $appKey -Name CurrentExe -Value $exe -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $appKey -Name InstallGeneration -Value $generation -PropertyType String -Force | Out-Null
