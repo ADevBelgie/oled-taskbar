@@ -69,6 +69,17 @@ static int resolve(const wchar_t* symbolDir) {
  WritePrivateProfileStringW(L"Symbols",L"TaskbarSize",std::to_wstring(im.nt->OptionalHeader.SizeOfImage).c_str(),ini.c_str());
  SymCleanup(p);return 0;
 }
+// Windows updates replace taskbar.dll; the bridge then rightly refuses the stale
+// RVAs. Report whether bridge.ini still describes the installed image (exit 6 if not).
+static int symbolsStatus() {
+ Image im(systemFile(L"taskbar.dll")); if(!im.nt)return 1;
+ auto ini=directory()+L"\\bridge.ini";
+ auto number=[&](const wchar_t* name){wchar_t v[80];GetPrivateProfileStringW(L"Symbols",name,L"0",v,80,ini.c_str());return wcstoul(v,nullptr,0);};
+ DWORD timestamp=im.nt->FileHeader.TimeDateStamp,size=im.nt->OptionalHeader.SizeOfImage;
+ bool match=number(L"TaskbarTimestamp")==timestamp&&number(L"TaskbarSize")==size&&number(L"TaskbarRva")&&number(L"MultiMonRva");
+ std::wcout<<L"Taskbar Timestamp="<<timestamp<<L" Size="<<size<<L" Configured Timestamp="<<number(L"TaskbarTimestamp")<<L" Size="<<number(L"TaskbarSize")<<L" match="<<match<<L"\n";
+ return match?0:6;
+}
 static bool shellName(const wchar_t* s){return !_wcsicmp(s,L"explorer.exe")||!_wcsicmp(s,L"ShellHost.exe")||!_wcsicmp(s,L"StartMenuExperienceHost.exe");}
 static std::vector<DWORD> shellProcesses() {
  DWORD session;ProcessIdToSessionId(GetCurrentProcessId(),&session);
@@ -131,6 +142,7 @@ int wmain(int argc,wchar_t** argv) {
  if(argc<2)return 1;
  if(!wcscmp(argv[1],L"pdb-info"))return pdbInfo();
  if(!wcscmp(argv[1],L"resolve")&&argc==3)return resolve(argv[2]);
+ if(!wcscmp(argv[1],L"symbols-status"))return symbolsStatus();
  if(!wcscmp(argv[1],L"configure")&&argc==5)return configure(_wtoi(argv[2])!=0,(DWORD)_wtol(argv[3]),(DWORD)_wtol(argv[4]));
  if(!wcscmp(argv[1],L"probe")){APPBARDATA data{};data.cbSize=sizeof(data);std::wcout<<L"AutoHide="<<(SHAppBarMessage(ABM_GETSTATE,&data)&ABS_AUTOHIDE)<<L"\n";EnumDisplayMonitors(nullptr,nullptr,monitors,0);EnumWindows(windows,0);return 0;}
  if(!wcscmp(argv[1],L"test-workarea")){WNDCLASSW c{};c.hInstance=GetModuleHandleW(nullptr);c.lpfnWndProc=DefWindowProcW;c.lpszClassName=L"OledTaskbar.GeometryTest";c.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);if(!RegisterClassW(&c))return 1;bool ok=true;EnumDisplayMonitors(nullptr,nullptr,testWorkArea,(LPARAM)&ok);return ok?0:5;}

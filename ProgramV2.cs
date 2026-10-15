@@ -125,21 +125,69 @@ namespace OledTaskbarV2
             try
             {
                 if(!reconcile)SetWanted(desired);
+                // Check before Operate changes auto-hide or the shell: after a Windows update
+                // the bridge rejects stale symbols and Explorer cannot be configured.
+                if(desired&&!await Task.Run(()=>SymbolsMatch()))
+                {
+                    Show();
+                    if(reconcile||!ConfirmSymbolDownload())throw new Exception(StaleSymbols);
+                    status.Text="Downloading matching Windows taskbar symbols from Microsoft…";
+                    await Task.Run(()=>RefreshSymbols());
+                    status.Text="Applying taskbar placement…";
+                }
                 string result=await Task.Run(()=>Operate(desired));status.Text=result;Program.Log(result);return true;
             }
             catch(Exception ex){status.Text="Needs attention: "+ex.Message;Program.Log(ex.ToString());Show();return false;}
             finally{busy=false;enable.Enabled=disable.Enabled=true;if(pendingReconcile){pendingReconcile=false;Schedule();}}
         }
-        string RunNative(string args)
+        int RunNativeCode(string args,out string text)
         {
             using(var p=Process.Start(new ProcessStartInfo(Path.Combine(Program.Folder,"NativeControl.exe"),args){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true}))
             {
                 var output=p.StandardOutput.ReadToEndAsync();var error=p.StandardError.ReadToEndAsync();
                 if(!p.WaitForExit(45000)){p.Kill();p.WaitForExit();throw new Exception("Native operation timed out; helper stopped and recovery data retained.");}
                 Task.WaitAll(output,error);Program.Log(args+" exit="+p.ExitCode+" "+output.Result+error.Result);
-                if(p.ExitCode!=0)throw new Exception("Shell operation failed ("+p.ExitCode+"). "+output.Result+error.Result);
-                return output.Result;
+                text=p.ExitCode==0?output.Result:output.Result+error.Result;return p.ExitCode;
             }
+        }
+        string RunNative(string args)
+        {
+            string text;int code=RunNativeCode(args,out text);
+            if(code!=0)throw new Exception("Shell operation failed ("+code+"). "+text);
+            return text;
+        }
+        const string StaleSymbols="Windows updated its taskbar, so the saved taskbar symbols no longer match. Press Enable to download matching public symbols from Microsoft.";
+        bool SymbolsMatch()
+        {
+            string text;int code=RunNativeCode("symbols-status",out text);
+            if(code==0)return true;if(code==6)return false;
+            throw new Exception("The installed Windows taskbar could not be identified ("+code+"). "+text);
+        }
+        bool ConfirmSymbolDownload()
+        {
+            return MessageBox.Show(this,"Windows updated its taskbar (taskbar.dll). OLED Taskbar needs the matching public debug symbols from Microsoft's symbol server before it can move the taskbar again.\n\nOnly the Windows module's public symbol identifier is sent. Download them now?",
+                "OLED Taskbar",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
+        }
+        void RefreshSymbols()
+        {
+            string pdb;string url=SymbolUrl(RunNative("pdb-info"),out pdb);
+            string folder=Path.Combine(Program.Data,"symbols");Directory.CreateDirectory(folder);
+            string destination=Path.Combine(folder,pdb),partial=destination+".download";
+            System.Net.ServicePointManager.SecurityProtocol|=System.Net.SecurityProtocolType.Tls12;
+            try{using(var web=new System.Net.WebClient())web.DownloadFile(url,partial);}
+            catch(System.Net.WebException ex){throw new Exception("Matching taskbar symbols could not be downloaded: "+ex.Message);}
+            if(File.Exists(destination))File.Delete(destination);File.Move(partial,destination);
+            // resolve writes bridge.ini next to NativeControl.exe; the bridge rereads it on the next Enable.
+            string text;if(RunNativeCode("resolve \""+folder+"\"",out text)!=0||!SymbolsMatch())
+                throw new Exception("Matching taskbar symbols were not found for this Windows build. OLED Taskbar stays disabled. "+text);
+            Program.Log("Taskbar symbols refreshed for the updated Windows taskbar.");
+        }
+        static string SymbolUrl(string pdbInfo,out string pdb)
+        {
+            var match=System.Text.RegularExpressions.Regex.Match(pdbInfo,"\"Pdb\":\"([a-zA-Z0-9_-]+\\.pdb)\",\"Key\":\"([0-9A-F]+)\"");
+            if(!match.Success)throw new Exception("Unexpected symbol identifier.");
+            pdb=match.Groups[1].Value;
+            return "https://msdl.microsoft.com/download/symbols/"+pdb+"/"+match.Groups[2].Value+"/"+pdb;
         }
         string Operate(bool desired)
         {

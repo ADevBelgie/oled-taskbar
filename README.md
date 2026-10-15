@@ -48,6 +48,16 @@ The normal multi-monitor taskbar preference is left unchanged. The bridge watche
 the controller's process handle and restores the layout if that process exits.
 There is no steady-state polling loop or per-frame hook in game processes.
 
+## After Windows updates
+
+Windows updates regularly replace `taskbar.dll`. The saved symbols then no longer
+match, and the bridge refuses to hook Explorer instead of guessing addresses.
+OLED Taskbar detects this before changing anything: startup leaves Windows'
+original taskbar in place and shows a message, and pressing **Enable** asks to
+download the matching public symbols from Microsoft and refreshes the installed
+`bridge.ini`. No rebuild, reinstall, or sign-out is needed. If Microsoft has no
+matching symbols for the new build, the utility stays disabled.
+
 ## Uninstall and upgrades
 
 Use the panel's Uninstall button, the Uninstall OLED Taskbar shortcut, or Windows'

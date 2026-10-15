@@ -37,3 +37,19 @@ foreach($case in $cases){
     if($accepted -ne $case[4]){throw "FAIL: $($case[0])"}
     Write-Output "PASS: $($case[0])"
 }
+# Symbol refresh after a Windows update: only a well-formed public identifier becomes a URL.
+$symbolUrl=$assembly.GetType('OledTaskbarV2.Panel').GetMethod('SymbolUrl',[Reflection.BindingFlags]'NonPublic,Static')
+$symbolCases=@(
+    @('Symbol URL built','{"Pdb":"Taskbar.pdb","Key":"0123456789ABCDEF0123456789ABCDEF1","Timestamp":1,"Size":2}','https://msdl.microsoft.com/download/symbols/Taskbar.pdb/0123456789ABCDEF0123456789ABCDEF1/Taskbar.pdb'),
+    @('Symbol path traversal rejected','{"Pdb":"..\\Taskbar.pdb","Key":"0123","Timestamp":1,"Size":2}',$null),
+    @('Symbol key injection rejected','{"Pdb":"Taskbar.pdb","Key":"01/../x","Timestamp":1,"Size":2}',$null)
+)
+foreach($case in $symbolCases){
+    $url=$null
+    try{$url=$symbolUrl.Invoke($null,@([string]$case[1],$null))}catch{
+        $failure=$_.Exception;while($failure.InnerException){$failure=$failure.InnerException}
+        if($failure.GetType() -ne [System.Exception]){throw}
+    }
+    if($url -ne $case[2]){throw "FAIL: $($case[0])"}
+    Write-Output "PASS: $($case[0])"
+}
