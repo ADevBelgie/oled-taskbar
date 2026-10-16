@@ -70,8 +70,11 @@ try {
         if ((Get-Item -LiteralPath $versionDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Version directory is a reparse point: $versionDir" }
         foreach ($name in $runtimeFiles) {
             $installed = Join-Path $versionDir $name
+            # The app rewrites bridge.ini in place after Windows updates replace taskbar.dll;
+            # the bridge validates it against the live image, so only require it to exist.
             if (-not (Test-Path -LiteralPath $installed -PathType Leaf) -or
-                (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $sources[$name] -Algorithm SHA256).Hash) {
+                ($name -ne 'bridge.ini' -and
+                 (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $sources[$name] -Algorithm SHA256).Hash)) {
                 throw "Immutable version directory is incomplete or modified: $versionDir"
             }
         }

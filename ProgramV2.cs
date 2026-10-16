@@ -52,7 +52,7 @@ namespace OledTaskbarV2
         readonly System.Collections.Generic.List<EventWaitHandle> signals=new System.Collections.Generic.List<EventWaitHandle>();
         readonly System.Collections.Generic.List<RegisteredWaitHandle> waits=new System.Collections.Generic.List<RegisteredWaitHandle>();
         readonly uint taskbarCreated=RegisterWindowMessage("TaskbarCreated");
-        bool busy,closing,loading=true,pendingReconcile;string initial;
+        bool busy,closing,loading=true,pendingReconcile,waiting;string initial;
         NamedPipeServerStream pipeServer; volatile bool pipeClosing;
         public Panel(string command)
         {
@@ -79,7 +79,7 @@ namespace OledTaskbarV2
                 else if(initial=="disable"||initial=="restore"){bool restored=await Change(false);Environment.ExitCode=restored?0:1;closing=true;Close();return;}
                 else if(WantsEnabled()||State()!="Disabled")await Reconcile();
                 else status.Text="Disabled. Your original Windows taskbar behavior is active.";
-                if(initial=="background"&&(State()=="Enabled"||(State()=="Disabled"&&!WantsEnabled())))Hide();
+                if(initial=="background"&&(State()=="Enabled"||waiting||(State()=="Disabled"&&!WantsEnabled())))Hide();
             };
             FormClosing+=async(s,e)=>{if(closing)return;if(e.CloseReason==CloseReason.WindowsShutDown)return;e.Cancel=true;Hide();await Task.CompletedTask;};
         }
@@ -115,7 +115,22 @@ namespace OledTaskbarV2
         string State(){using(var k=Registry.CurrentUser.CreateSubKey(Program.Key))return (string)k.GetValue("State","Disabled");}
         bool WantsEnabled(){using(var k=Registry.CurrentUser.CreateSubKey(Program.Key))return (int)k.GetValue("WantEnabled",State()=="Enabled"?1:0)!=0;}
         void SetWanted(bool value){using(var k=Registry.CurrentUser.CreateSubKey(Program.Key))k.SetValue("WantEnabled",value?1:0);}
-        async Task Reconcile(){string state=State();if(state!="Disabled"&&state!="Enabled"&&!await Change(false,true))return;if(WantsEnabled())await Change(true,true);}
+        async Task Reconcile()
+        {
+            string state=State();
+            // With one display (e.g. the OLED switched off overnight) there is no secondary to
+            // move the taskbar to. Restore Windows' own layout once and wait quietly; the
+            // DisplaySettingsChanged reconcile re-enables when the second display returns.
+            if(WantsEnabled()&&DisplayCount()<2)
+            {
+                if(state!="Disabled"&&!await Change(false,true))return;
+                if(!waiting){waiting=true;Program.Log("Waiting for the secondary display; Windows' own taskbar stays in place.");}
+                status.Text="Waiting for the secondary display. Windows' own taskbar is active.";
+                return;
+            }
+            waiting=false;
+            if(state!="Disabled"&&state!="Enabled"&&!await Change(false,true))return;if(WantsEnabled())await Change(true,true);
+        }
         internal string RestoreForCommand(){SetWanted(false);return Operate(false);}
         void WriteState(string value){using(var k=Registry.CurrentUser.CreateSubKey(Program.Key))k.SetValue("State",value);}
         void Register(string command,Action action){var ev=new EventWaitHandle(false,EventResetMode.AutoReset,@"Local\OledTaskbar2."+command);signals.Add(ev);waits.Add(ThreadPool.RegisterWaitForSingleObject(ev,(s,t)=>{try{BeginInvoke(action);}catch(InvalidOperationException){}},null,Timeout.Infinite,false));}
@@ -125,6 +140,10 @@ namespace OledTaskbarV2
             try
             {
                 if(!reconcile)SetWanted(desired);
+                if(desired&&DisplayCount()<2)throw new Exception("Connect the secondary display first. OLED Taskbar enables automatically when it appears.");
+                // After a display returns, Explorer briefly destroys and recreates its taskbar.
+                // Enabling or verifying during that window fails, so wait for a visible taskbar.
+                if(desired&&!await Task.Run(()=>TaskbarReady(10000)))throw new Exception("Windows taskbar is not ready.");
                 // Check before Operate changes auto-hide or the shell: after a Windows update
                 // the bridge rejects stale symbols and Explorer cannot be configured.
                 if(desired&&!await Task.Run(()=>SymbolsMatch()))
@@ -227,15 +246,27 @@ namespace OledTaskbarV2
                 try{RunNative("configure 0 "+owner+" "+(original&1));}catch(Exception ex){nativeError=ex;}
                 SetState(original);
                 if(nativeError!=null)throw nativeError;
-                VerifyEventually(false,ReadMM(),(original&1)!=0);
+                // Restoration may run while Explorer rebuilds its taskbar after a display change;
+                // allow it longer than enabling before declaring recovery necessary.
+                VerifyEventually(false,ReadMM(),(original&1)!=0,30);
                 if(GetState()!=(uint)(original&1))throw new Exception("Auto-hide restoration could not be verified.");
             }
             WriteState("Disabled");
         }
-        void VerifyEventually(bool desired,int mm,bool? autoHide=null)
+        static int DisplayCount(){return GetSystemMetrics(80);} // SM_CMONITORS
+        static bool TaskbarReady(int timeout)
+        {
+            for(var watch=Stopwatch.StartNew();;Thread.Sleep(250))
+            {
+                var bar=FindWindow("Shell_TrayWnd",null);
+                if(bar!=IntPtr.Zero&&IsWindowVisible(bar))return true;
+                if(watch.ElapsedMilliseconds>=timeout)return false;
+            }
+        }
+        void VerifyEventually(bool desired,int mm,bool? autoHide=null,int attempts=10)
         {
             Exception last=null;
-            for(int attempt=0;attempt<10;attempt++)
+            for(int attempt=0;attempt<attempts;attempt++)
             {try{Verify(RunNative("probe"),desired,mm,autoHide??(GetState()!=0));return;}catch(Exception ex){last=ex;}Thread.Sleep(300);}
             throw last;
         }
@@ -293,6 +324,8 @@ namespace OledTaskbarV2
         [StructLayout(LayoutKind.Sequential)] struct APPBARDATA{public int cbSize;public IntPtr hWnd;public uint callback,edge;public int left,top,right,bottom;public IntPtr lParam;}
         [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr FindWindow(string cls,string name);
         [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern uint RegisterWindowMessage(string value);
+        [DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll")]static extern int GetSystemMetrics(int index);
         [DllImport("shell32.dll")]static extern UIntPtr SHAppBarMessage(uint message,ref APPBARDATA data);
     }
 }

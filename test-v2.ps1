@@ -14,6 +14,11 @@ $disabled=@'
 Shell_TrayWnd hwnd=1 pid=2 visible=1 rect=0,760,1200,800
 Shell_SecondaryTrayWnd hwnd=3 pid=2 visible=1 rect=1200,600,2100,640
 '@
+# Primary display switched off: only the secondary remains and becomes primary.
+$single=@'
+\\.\DISPLAY2 primary=1 bounds=0,0,900,640 work=0,0,900,640 display=SECONDARY
+Shell_TrayWnd hwnd=1 pid=2 visible=1 rect=0,638,900,678
+'@
 $cases=@(
     @('Valid enabled',$enabled,$true,-1,$true),
     @('OLED reservation rejected',$enabled.Replace('work=0,0,1200,800','work=0,0,1200,400'),$true,-1,$false),
@@ -25,6 +30,8 @@ $cases=@(
     @('Corrupted restore work area rejected',$disabled.Replace('work=0,0,1200,800','work=0,0,1200,400'),$false,1,$false),
     @('Missing restored secondary rejected',($disabled -replace '(?m)^Shell_SecondaryTrayWnd.*',''),$false,1,$false),
     @('Unexpected restored secondary rejected',$disabled,$false,0,$false),
+    @('Single-display restore accepted',$single,$false,1,$true),
+    @('Single-display enable rejected',$single,$true,-1,$false),
     @('Resolution-independent geometry',$enabled.Replace('1200','1000').Replace('800','700').Replace('2100','1900'),$true,-1,$true)
 )
 foreach($case in $cases){

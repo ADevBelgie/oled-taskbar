@@ -48,6 +48,11 @@ The normal multi-monitor taskbar preference is left unchanged. The bridge watche
 the controller's process handle and restores the layout if that process exits.
 There is no steady-state polling loop or per-frame hook in game processes.
 
+When only one display is connected, for example while the primary monitor is
+switched off, there is nowhere to move the taskbar. OLED Taskbar restores
+Windows' own layout once, waits quietly, and re-enables when the second display
+returns and Explorer has rebuilt its taskbar.
+
 ## After Windows updates
 
 Windows updates regularly replace `taskbar.dll`. The saved symbols then no longer
